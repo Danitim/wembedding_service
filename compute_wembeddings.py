@@ -25,6 +25,10 @@ if __name__ == "__main__":
     parser.add_argument("--dtype", default="float16", type=str, help="Dtype to save as")
     parser.add_argument("--format", default="conllu", type=str, help="Input format (conllu, conll)")
     parser.add_argument("--model", default="bert-base-multilingual-uncased-last4", type=str, help="Model name (see wembeddings.py for options)")
+    parser.add_argument("--mask_ellipsis", default=False, action="store_true",
+                        help="Mask ellipsis tokens in FORMS before computing embeddings.")
+    parser.add_argument("--ellipsis_mask_token", default="[MASK]", type=str,
+                        help="Token to use when masking ellipsis in FORMS.")
     parser.add_argument("--server", default=None, type=str, help="Use given server to compute the embeddings")
     parser.add_argument("--threads", default=4, type=int, help="Threads to use")
     args = parser.parse_args()
@@ -49,7 +53,10 @@ if __name__ == "__main__":
                 elif args.format == "conllu":
                     if columns[0].isdigit():
                         assert len(columns) == 10
-                        sentences[-1].append(columns[1])
+                        token = columns[1]
+                        if args.mask_ellipsis and (token == "" or token == "_"):
+                            token = args.ellipsis_mask_token
+                        sentences[-1].append(token)
             else:
                 in_sentence = False
     print("Loaded {} sentences and {} words.".format(len(sentences), sum(map(len, sentences))), file=sys.stderr, flush=True)
