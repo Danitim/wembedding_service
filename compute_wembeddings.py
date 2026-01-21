@@ -54,8 +54,12 @@ if __name__ == "__main__":
                     if columns[0].isdigit():
                         assert len(columns) == 10
                         token = columns[1]
-                        if args.mask_ellipsis and (token == "" or token == "_"):
-                            token = args.ellipsis_mask_token
+                        if args.mask_ellipsis:
+                            misc = columns[9]
+                            if misc and misc != "_":
+                                misc_parts = [part.strip() for part in misc.split("|")]
+                                if "Ellipsis=Yes" in misc_parts:
+                                    token = args.ellipsis_mask_token
                         sentences[-1].append(token)
             else:
                 in_sentence = False
