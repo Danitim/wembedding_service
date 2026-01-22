@@ -54,7 +54,7 @@ if __name__ == "__main__":
                     if columns[0].isdigit():
                         assert len(columns) == 10
                         token = columns[1]
-                        if args.mask_ellipsis:
+                        if args.mask_ellipsis and (token == "" or token == "_"):
                             misc = columns[9]
                             if misc and misc != "_":
                                 misc_parts = [part.strip() for part in misc.split("|")]
