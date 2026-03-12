@@ -24,6 +24,7 @@ class WEmbeddings:
     MODELS_MAP = {
         # Key: model name. Value: transformer model name, layer start, layer end.
         "bert-base-multilingual-uncased-last4": ("bert-base-multilingual-uncased", -4, None),
+        "rubert-conversational-last4": ("DeepPavlov/rubert-base-cased-conversational", -4, None),
         "robeczech-base-last4": ("ufal/robeczech-base", -4, None),
         "xlm-roberta-base-last4": ("xlm-roberta-base", -4, None),
     }
