@@ -102,7 +102,7 @@ class WEmbeddings:
                 # Remove [CLS] token
                 subword_embeddings = subword_embeddings[:, 1:, :]
 
-                segments = torch.from_numpy(np_segments).to(device)
+                segments = torch.from_numpy(np_segments).to(device).long()
                 batch_size, seq_len, hidden_size = subword_embeddings.shape
                 max_words = int(segments.max().item()) + 1
 
