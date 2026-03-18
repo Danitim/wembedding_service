@@ -123,6 +123,22 @@ class WEmbeddings:
 
             self.compute_embeddings = compute_embeddings
 
+        def _add_special_tokens(self, token_ids):
+            """Add [CLS] and [SEP] to a list of token ids.
+
+            build_inputs_with_special_tokens is a no-op for some fast
+            tokenizers (e.g. ModernBERT) that rely on the post_processor
+            in tokenizer.json instead.  This helper always works.
+            """
+            result = self.tokenizer.build_inputs_with_special_tokens(token_ids)
+            # If the method didn't actually add anything, do it manually.
+            if len(result) == len(token_ids):
+                cls_id = self.tokenizer.cls_token_id
+                sep_id = self.tokenizer.sep_token_id
+                if cls_id is not None and sep_id is not None:
+                    result = [cls_id] + token_ids + [sep_id]
+            return result
+
         def load(self):
             if self._model_loaded: return
             with self._loader_lock:
@@ -196,14 +212,14 @@ class WEmbeddings:
                 for word_subwords in sentence_subwords:
                     # Split sentences with too many subwords
                     if len(subwords[-1]) + len(word_subwords) > self.MAX_SUBWORDS_PER_SENTENCE:
-                        subwords[-1] = model.tokenizer.build_inputs_with_special_tokens(subwords[-1])
+                        subwords[-1] = model._add_special_tokens(subwords[-1])
                         segments.append([])
                         subwords.append([])
                         parts[-1].append(0)
                     segments[-1].extend([parts[-1][-1]] * len(word_subwords))
                     subwords[-1].extend(word_subwords)
                     parts[-1][-1] += 1
-                subwords[-1] = model.tokenizer.build_inputs_with_special_tokens(subwords[-1])
+                subwords[-1] = model._add_special_tokens(subwords[-1])
 
             max_sentence_len = max(len(sentence) for sentence in sentences)
             max_subwords = max(len(sentence) for sentence in subwords)
@@ -213,11 +229,7 @@ class WEmbeddings:
             for i, subword in enumerate(subwords):
                 np_subwords[i, :len(subword)] = subword
 
-            # Segments must cover all subword positions after [CLS] removal,
-            # i.e., max_subwords - 1 columns.  Padding value = max_sentence_len
-            # (a "trash" segment that gets dropped by [:, :-1] later).
-            segments_width = max_subwords - 1
-            np_segments = np.full([len(segments), segments_width], max_sentence_len, np.int32)
+            np_segments = np.full([len(segments), max_subwords - 1], max_sentence_len, np.int32)
             for i, segment in enumerate(segments):
                 np_segments[i, :len(segment)] = segment
 
