@@ -70,6 +70,8 @@ class WEmbeddings:
         def _load_torch(self):
             """Load model using PyTorch backend."""
             import torch
+            import torch._dynamo
+            torch._dynamo.config.suppress_errors = True
             import transformers
 
             self._torch_model = transformers.AutoModel.from_pretrained(
@@ -211,8 +213,11 @@ class WEmbeddings:
             for i, subword in enumerate(subwords):
                 np_subwords[i, :len(subword)] = subword
 
-            max_segments = max(len(segment) for segment in segments)
-            np_segments = np.full([len(segments), max_segments], max_sentence_len, np.int32)
+            # Segments must cover all subword positions after [CLS] removal,
+            # i.e., max_subwords - 1 columns.  Padding value = max_sentence_len
+            # (a "trash" segment that gets dropped by [:, :-1] later).
+            segments_width = max_subwords - 1
+            np_segments = np.full([len(segments), segments_width], max_sentence_len, np.int32)
             for i, segment in enumerate(segments):
                 np_segments[i, :len(segment)] = segment
 
