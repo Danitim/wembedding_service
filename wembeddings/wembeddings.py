@@ -41,48 +41,115 @@ class WEmbeddings:
             self._layer_end = layer_end
             self._loader_lock = loader_lock
 
+        def _load_tf(self):
+            """Load model using TensorFlow backend."""
+            import tensorflow as tf
+            import transformers
+
+            self._transformers_model = transformers.TFAutoModel.from_pretrained(
+                self._transformers_model_name,
+                config=transformers.AutoConfig.from_pretrained(self._transformers_model_name, output_hidden_states=True),
+            )
+
+            def compute_embeddings(subwords, segments):
+                subword_embeddings_layers = self._transformers_model(
+                    (tf.maximum(subwords, 0), tf.cast(tf.not_equal(subwords, -1), tf.int32))
+                ).hidden_states
+                subword_embeddings = tf.math.reduce_mean(subword_embeddings_layers[self._layer_start:self._layer_end], axis=0)
+
+                # Average subwords (word pieces) word embeddings for each token
+                def average_subwords(embeddings_and_segments):
+                    subword_embeddings, segments = embeddings_and_segments
+                    return tf.math.segment_mean(subword_embeddings, segments)
+                word_embeddings = tf.map_fn(average_subwords, (subword_embeddings[:, 1:], segments), dtype=tf.float32)[:, :-1]
+                return word_embeddings
+            self.compute_embeddings = tf.function(compute_embeddings).get_concrete_function(
+                tf.TensorSpec(shape=[None, None], dtype=tf.int32), tf.TensorSpec(shape=[None, None], dtype=tf.int32)
+            )
+
+        def _load_torch(self):
+            """Load model using PyTorch backend."""
+            import torch
+            import transformers
+
+            self._torch_model = transformers.AutoModel.from_pretrained(
+                self._transformers_model_name,
+                config=transformers.AutoConfig.from_pretrained(self._transformers_model_name, output_hidden_states=True),
+            )
+            self._torch_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            self._torch_model.to(self._torch_device).eval()
+
+            layer_start = self._layer_start
+            layer_end = self._layer_end
+            device = self._torch_device
+            model = self._torch_model
+
+            def compute_embeddings(np_subwords, np_segments):
+                subwords = torch.from_numpy(np_subwords).to(device)
+                input_ids = torch.clamp(subwords, min=0)
+                attention_mask = (subwords != -1).long()
+
+                with torch.no_grad():
+                    outputs = model(input_ids=input_ids, attention_mask=attention_mask)
+
+                # Average selected hidden layers
+                hidden_states = outputs.hidden_states
+                stacked = torch.stack(hidden_states[layer_start:layer_end])
+                subword_embeddings = stacked.mean(dim=0)
+
+                # Remove [CLS] token
+                subword_embeddings = subword_embeddings[:, 1:, :]
+
+                segments = torch.from_numpy(np_segments).to(device)
+                batch_size, seq_len, hidden_size = subword_embeddings.shape
+                max_words = int(segments.max().item()) + 1
+
+                # segment_mean: average subword embeddings per word
+                seg_expanded = segments.unsqueeze(-1).expand(-1, -1, hidden_size)
+                word_sums = torch.zeros(batch_size, max_words, hidden_size, device=device)
+                word_sums.scatter_add_(1, seg_expanded, subword_embeddings)
+
+                counts = torch.zeros(batch_size, max_words, 1, device=device)
+                counts.scatter_add_(1, segments.unsqueeze(-1), torch.ones(batch_size, seq_len, 1, device=device))
+                counts = counts.clamp(min=1)
+
+                word_embeddings = word_sums / counts
+                # Remove the last segment (padding / [SEP])
+                word_embeddings = word_embeddings[:, :-1, :]
+
+                return word_embeddings.cpu()
+
+            self.compute_embeddings = compute_embeddings
+
         def load(self):
             if self._model_loaded: return
             with self._loader_lock:
-                import tensorflow as tf
                 import transformers
 
                 if self._model_loaded: return
 
                 self.tokenizer = transformers.AutoTokenizer.from_pretrained(self._transformers_model_name, use_fast=True)
 
-                self._transformers_model = transformers.TFAutoModel.from_pretrained(
-                    self._transformers_model_name,
-                    config=transformers.AutoConfig.from_pretrained(self._transformers_model_name, output_hidden_states=True),
-                )
-
-                def compute_embeddings(subwords, segments):
-                    subword_embeddings_layers = self._transformers_model(
-                        (tf.maximum(subwords, 0), tf.cast(tf.not_equal(subwords, -1), tf.int32))
-                    ).hidden_states
-                    subword_embeddings = tf.math.reduce_mean(subword_embeddings_layers[self._layer_start:self._layer_end], axis=0)
-
-                    # Average subwords (word pieces) word embeddings for each token
-                    def average_subwords(embeddings_and_segments):
-                        subword_embeddings, segments = embeddings_and_segments
-                        return tf.math.segment_mean(subword_embeddings, segments)
-                    word_embeddings = tf.map_fn(average_subwords, (subword_embeddings[:, 1:], segments), dtype=tf.float32)[:, :-1]
-                    return word_embeddings
-                self.compute_embeddings = tf.function(compute_embeddings).get_concrete_function(
-                    tf.TensorSpec(shape=[None, None], dtype=tf.int32), tf.TensorSpec(shape=[None, None], dtype=tf.int32)
-                )
+                # Try TensorFlow first, fall back to PyTorch.
+                try:
+                    self._load_tf()
+                except (ImportError, ValueError):
+                    self._load_torch()
 
                 self._model_loaded = True
 
 
     def __init__(self, max_form_len=64, threads=None, preload_models=[]):
-        import tensorflow as tf
         import threading
 
-        # Impose the limit on the number of threads, if given
+        # Impose the limit on the number of threads, if given (TF only)
         if threads is not None:
-            tf.config.threading.set_inter_op_parallelism_threads(threads)
-            tf.config.threading.set_intra_op_parallelism_threads(threads)
+            try:
+                import tensorflow as tf
+                tf.config.threading.set_inter_op_parallelism_threads(threads)
+                tf.config.threading.set_intra_op_parallelism_threads(threads)
+            except ImportError:
+                pass
 
         self._max_form_len = max_form_len
 
