@@ -211,7 +211,8 @@ class WEmbeddings:
             for i, subword in enumerate(subwords):
                 np_subwords[i, :len(subword)] = subword
 
-            np_segments = np.full([len(segments), max_subwords - 1], max_sentence_len, np.int32)
+            max_segments = max(len(segment) for segment in segments)
+            np_segments = np.full([len(segments), max_segments], max_sentence_len, np.int32)
             for i, segment in enumerate(segments):
                 np_segments[i, :len(segment)] = segment
 
